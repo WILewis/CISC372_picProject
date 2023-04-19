@@ -3,6 +3,7 @@
 #include <time.h>
 #include <string.h>
 #include "image.h"
+#include <pthread.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -20,7 +21,6 @@ Matrix algorithms[]={
     {{-2,-1,0},{-1,1,1},{0,1,2}},
     {{0,0,0},{0,1,0},{0,0,0}}
 };
-
 
 //getPixelValue - Computes the value of a specific pixel on a specific channel using the selected convolution kernel
 //Paramters: srcImage:  An Image struct populated with the image being convoluted
@@ -87,36 +87,114 @@ enum KernelTypes GetKernelType(char* type){
     else return IDENTITY;
 }
 
+//structure for thread/chunk of image
+typedef struct ThreadData {
+    Image* srcImage;
+    Image* destImage;
+    Matrix* algorithm;
+    int startRow;
+    int endRow;
+} ThreadData;
+
+//convoluteChunk: loops over each row of the image in a given chunk and convolutes it
+//parameters:     data: data for one chunk or thread of the image
+//performs exactly the same as the convolute function but works with threads of the image
+void convoluteChunk(ThreadData* data) {
+    int bpp = data->srcImage->bpp;
+    int width = data->srcImage->width;
+    int startRow = data->startRow;
+    int endRow = data->endRow;
+    int span = bpp * bpp;
+
+    for (int row = startRow; row < endRow; row++) {
+        for (int pix = 0; pix < width; pix++) {
+            for (int bit = 0; bit < bpp; bit++) {
+                data->destImage->data[(row * width + pix) * bpp + bit] = getPixelValue(data->srcImage, pix, row, bit, *data->algorithm);
+            }
+        }
+    }
+}
+
+//convoluteParallel(): splits the image into chunks and convolutes each chunk as a separate thread
+//parameters: srcImage: the image being convoluted
+//            destImage: the pre-allocated space receiving the convoluted image
+//            algorithm: the kernel matrix to use for the convolution
+//            numThreads: the number of threads (chunks) to divide the image into
+void convoluteParallel(Image* srcImage, Image* destImage, Matrix algorithm, int numThreads) {
+    //split image into equal size chunks based on number of threads
+    int height = srcImage->height;
+    int chunkSize = height / numThreads;
+
+    pthread_t threads[numThreads];
+    ThreadData threadData[numThreads];
+
+    //loops for given number of threads and for each iteration:
+    //creates a thread with the convolution algorithm and feeds it a chunk of image data
+    for (int i = 0; i < numThreads; i++) {
+        int startRow = i * chunkSize;
+        int endRow = (i == numThreads - 1) ? height : startRow + chunkSize;
+
+        threadData[i].srcImage = srcImage;
+        threadData[i].destImage = destImage;
+        threadData[i].algorithm = &algorithm;
+        threadData[i].startRow = startRow;
+        threadData[i].endRow = endRow;
+
+        pthread_create(&threads[i], NULL, (void* (*)(void*))convoluteChunk, &threadData[i]);
+    }
+
+    //loops for given number of threads and joins all of them.
+    for (int i = 0; i < numThreads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+}
+
 //main:
 //argv is expected to take 2 arguments.  First is the source file name (can be jpg, png, bmp, tga).  Second is the lower case name of the algorithm.
 int main(int argc,char** argv){
+
     long t1,t2;
     t1=time(NULL);
 
     stbi_set_flip_vertically_on_load(0); 
+ 
     if (argc!=3) return Usage();
+
     char* fileName=argv[1];
+
     if (!strcmp(argv[1],"pic4.jpg")&&!strcmp(argv[2],"gauss")){
         printf("You have applied a gaussian filter to Gauss which has caused a tear in the time-space continum.\n");
     }
+
     enum KernelTypes type=GetKernelType(argv[2]);
 
-    Image srcImage,destImage,bwImage;   
+    Image srcImage,destImage,bwImage;
+
     srcImage.data=stbi_load(fileName,&srcImage.width,&srcImage.height,&srcImage.bpp,0);
+
     if (!srcImage.data){
         printf("Error loading file %s.\n",fileName);
         return -1;
     }
+
     destImage.bpp=srcImage.bpp;
     destImage.height=srcImage.height;
     destImage.width=srcImage.width;
     destImage.data=malloc(sizeof(uint8_t)*destImage.width*destImage.bpp*destImage.height);
-    convolute(&srcImage,&destImage,algorithms[type]);
+
+    //parallell convolution algorithm on new image with given algorithm
+    convoluteParallel(&srcImage, &destImage, algorithms[type], 4);
+    //serial convolution algorithm on new image with given algorithm
+    //convolute(&srcImage,&destImage,algorithms[type]);
+
     stbi_write_png("output.png",destImage.width,destImage.height,destImage.bpp,destImage.data,destImage.bpp*destImage.width);
+    
     stbi_image_free(srcImage.data);
     
     free(destImage.data);
+    
     t2=time(NULL);
     printf("Took %ld seconds\n",t2-t1);
+
    return 0;
 }
