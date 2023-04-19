@@ -1,0 +1,9 @@
+Script started on Wed Apr 19 17:13:19 2023
+]0;isaacl@r1n00.darwin:~/CISC372_picProject[?1034h[isaacl@r1n00 CISC372_picProject]$ srun ./threadsimage pic1.jpg blur
+Took 5 seconds
+]0;isaacl@r1n00.darwin:~/CISC372_picProject[isaacl@r1n00 CISC372_picProject]$ srun ./openmpimage pic1.jpg blur
+Took 7 seconds
+]0;isaacl@r1n00.darwin:~/CISC372_picProject[isaacl@r1n00 CISC372_picProject]$ exit
+exit
+
+Script done on Wed Apr 19 17:13:51 2023
